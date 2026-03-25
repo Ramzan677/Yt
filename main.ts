@@ -1,5 +1,5 @@
 /**
- * Advanced YouTube Downloader API
+ * YouTube Metadata & Stream Extractor
  * Developed by Ramzan Ahsan
  */
 
@@ -19,116 +19,77 @@ Deno.serve(async (request) => {
 
   if (request.method === 'OPTIONS') return new Response(null, { headers });
 
-  // Root path instructions
-  if (url.pathname === "/" && !youtubeUrl) {
-    return new Response(
-      JSON.stringify({
-        status: "online",
-        message: "YouTube Downloader API is active",
-        usage: `${url.origin}/?url=YOUTUBE_LINK`,
-        developed_by: DEVELOPER
-      }, null, 2), 
-      { headers }
-    );
-  }
-
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
     return new Response(
-      JSON.stringify({ status: 'error', message: 'Invalid YouTube URL provided.', developed_by: DEVELOPER }),
+      JSON.stringify({ status: 'error', message: 'Send a valid URL: ?url=LINK', developed_by: DEVELOPER }),
       { status: 400, headers }
     );
   }
 
   try {
-    const data = await getFullYoutubeData(videoId);
-    if (data) {
-      data.developed_by = DEVELOPER;
-      return new Response(JSON.stringify(data, null, 2), { headers });
-    }
-  } catch (err) {
-    console.error("Extraction error:", err);
-  }
-
-  // Final fallback with direct download tool suggestions
-  return new Response(
-    JSON.stringify({
-      status: 'error',
-      message: 'Direct extraction failed. Use these tools:',
-      videoId: videoId,
-      direct_tools: [
-        `https://ssyoutube.com/watch?v=${videoId}`,
-        `https://y2mate.com/youtube/${videoId}`
-      ],
-      developed_by: DEVELOPER
-    }, null, 2),
-    { headers }
-  );
-});
-
-function extractVideoId(url) {
-  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([^&?#]+)/);
-  return match ? match[1] : null;
-}
-
-async function getFullYoutubeData(videoId) {
-  try {
-    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    // We use a Mobile User-Agent to get a simpler version of the YouTube page
+    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999&has_verified=1`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+        'Accept-Language': 'en-US,en;q=0.9'
       }
     });
 
     const html = await res.text();
-    const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-    if (!match) return null;
+    
+    // Improved extraction regex
+    const jsonStr = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/)?.[1] 
+                 || html.match(/var ytInitialPlayerResponse = ({.+?});/)?.[1];
 
-    const data = JSON.parse(match[1]);
+    if (!jsonStr) throw new Error("Could not find player data");
+
+    const data = JSON.parse(jsonStr);
     const streamingData = data.streamingData || {};
     const formats = [];
 
-    // Combine both fixed and adaptive formats for 1080p, 720p, etc.
+    // Process both format types
     const allStreams = [...(streamingData.formats || []), ...(streamingData.adaptiveFormats || [])];
 
     allStreams.forEach(stream => {
-      let url = stream.url;
-      if (!url && stream.signatureCipher) {
-        const params = new URLSearchParams(stream.signatureCipher);
-        url = params.get('url');
+      let downloadUrl = stream.url;
+      
+      // Handle ciphered signatures if necessary
+      if (!downloadUrl && stream.signatureCipher) {
+        const s = new URLSearchParams(stream.signatureCipher);
+        downloadUrl = s.get('url');
       }
 
-      if (url) {
+      if (downloadUrl) {
         formats.push({
-          quality: stream.qualityLabel || (stream.audioQuality ? 'AUDIO' : '360p'),
+          quality: stream.qualityLabel || (stream.audioQuality ? "AUDIO" : "SD"),
           type: stream.mimeType.split(';')[0],
-          download_url: url,
-          size: formatBytes(stream.contentLength),
-          fps: stream.fps || null
+          url: downloadUrl
         });
       }
     });
 
-    return {
+    return new Response(JSON.stringify({
       status: 'success',
       videoId: videoId,
-      title: data.videoDetails?.title || "Unknown Title",
-      author: data.videoDetails?.author || "Unknown Channel",
-      duration: formatTime(data.videoDetails?.lengthSeconds),
+      title: data.videoDetails?.title || "Video Title Found",
+      author: data.videoDetails?.author || "YouTube Creator",
       thumbnail: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
-      downloads: formats
-    };
-  } catch { return null; }
-}
+      downloads: formats,
+      developed_by: DEVELOPER
+    }, null, 2), { headers });
 
-function formatBytes(bytes) {
-  if (!bytes) return "Unknown Size";
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return (bytes / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][i];
-}
+  } catch (err) {
+    return new Response(JSON.stringify({
+      status: 'error',
+      message: 'YouTube blocked the request. Try again in a moment.',
+      developed_by: DEVELOPER
+    }), { headers });
+  }
+});
 
-function formatTime(seconds) {
-  if (!seconds) return "0:00";
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+function extractVideoId(url) {
+  if (!url) return null;
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([^&?#]+)/);
+  return match ? match[1] : null;
 }
