@@ -1,5 +1,5 @@
 /**
- * Pro YouTube Multi-Engine API
+ * Ultimate YouTube Bypass API
  * Developed by Ramzan Ahsan
  */
 
@@ -21,58 +21,46 @@ Deno.serve(async (request) => {
   if (!youtubeUrl) {
     return new Response(JSON.stringify({
       status: "online",
-      message: "API Ready. Usage: ?url=LINK",
+      usage: "?url=YOUTUBE_LINK",
       developed_by: DEVELOPER
     }), { headers });
   }
 
   const vId = extractVideoId(youtubeUrl);
 
-  // --- ENGINE 1: COBALT (Try first for direct MP4) ---
   try {
-    const cobalt = await fetch("https://api.cobalt.tools/api/json", {
-      method: "POST",
-      headers: { "Accept": "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ url: youtubeUrl, vQuality: "720" })
-    });
-    const cData = await cobalt.json();
-    if (cData.url) {
+    // ENGINE: High-speed specialized extraction
+    // This bypasses YouTube blocks by using an external processing node
+    const res = await fetch(`https://api.vyt.workers.dev/api/info?url=${encodeURIComponent(youtubeUrl)}`);
+    const data = await res.json();
+
+    if (data && data.formats) {
+      // Get the highest quality MP4 available
+      const bestVideo = data.formats
+        .filter(f => f.container === 'mp4' && f.hasVideo && f.hasAudio)
+        .sort((a, b) => b.height - a.height)[0];
+
       return new Response(JSON.stringify({
         status: "success",
-        engine: "Cobalt-Premium",
-        title: "Video Found",
-        download: cData.url,
+        title: data.title,
+        duration: data.duration,
+        thumbnail: data.thumbnail,
+        download_url: bestVideo ? bestVideo.url : data.formats[0].url,
+        quality: bestVideo ? `${bestVideo.height}p` : "Auto",
         developed_by: DEVELOPER
       }, null, 2), { headers });
     }
-  } catch (e) { console.log("Engine 1 busy"); }
+  } catch (err) {
+    console.log("Primary extraction failed, trying secondary...");
+  }
 
-  // --- ENGINE 2: INVIDIOUS (Fallback for metadata + links) ---
-  try {
-    const invidious = await fetch(`https://yewtu.be/api/v1/videos/${vId}`);
-    if (invidious.ok) {
-      const iData = await invidious.json();
-      return new Response(JSON.stringify({
-        status: "success",
-        engine: "Invidious-Core",
-        title: iData.title,
-        thumbnail: iData.videoThumbnails?.[0]?.url,
-        formats: iData.formatStreams?.map(f => ({ quality: f.qualityLabel, link: f.url })),
-        developed_by: DEVELOPER
-      }, null, 2), { headers });
-    }
-  } catch (e) { console.log("Engine 2 busy"); }
-
-  // --- ENGINE 3: THE "NEVER FAIL" REDIRECT ---
+  // EMERGENCY FALLBACK (If the API above is down)
   return new Response(JSON.stringify({
-    status: "redirect",
-    message: "Direct API servers are busy. Click the link below to download instantly.",
-    video_info: {
-      id: vId,
-      thumbnail: `https://i.ytimg.com/vi/${vId}/maxresdefault.jpg`
-    },
-    instant_download: `https://ssyoutube.com/watch?v=${vId}`,
-    alternative: `https://y2mate.com/youtube/${vId}`,
+    status: "fallback",
+    message: "Security active. Use the direct link generated below:",
+    video_id: vId,
+    instant_download: `https://9xbuddy.com/process?url=${encodeURIComponent(youtubeUrl)}`,
+    alternative: `https://ssyoutube.com/watch?v=${vId}`,
     developed_by: DEVELOPER
   }, null, 2), { headers });
 });
