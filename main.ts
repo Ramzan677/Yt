@@ -1,11 +1,10 @@
 /**
- * YouTube Metadata & Stream Extractor
+ * Advanced YouTube Downloader API
  * Developed by Ramzan Ahsan
  */
 
 const DEVELOPER = "Ramzan Ahsan";
 
-// Use Deno.serve for better compatibility with Deno Deploy
 Deno.serve(async (request) => {
   const url = new URL(request.url);
   const youtubeUrl = url.searchParams.get('url');
@@ -18,88 +17,118 @@ Deno.serve(async (request) => {
     'X-Powered-By': DEVELOPER
   };
 
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers });
-  }
+  if (request.method === 'OPTIONS') return new Response(null, { headers });
 
-  // Root path info
-  if (url.pathname === "/") {
+  // Root path instructions
+  if (url.pathname === "/" && !youtubeUrl) {
     return new Response(
       JSON.stringify({
-        message: "YouTube API is running",
-        usage: "/?url=YOUR_YOUTUBE_URL",
+        status: "online",
+        message: "YouTube Downloader API is active",
+        usage: `${url.origin}/?url=YOUTUBE_LINK`,
         developed_by: DEVELOPER
-      }), 
+      }, null, 2), 
       { headers }
-    );
-  }
-
-  if (!youtubeUrl) {
-    return new Response(
-      JSON.stringify({
-        status: 'error',
-        message: 'YouTube URL parameter is required',
-        developed_by: DEVELOPER
-      }),
-      { status: 400, headers }
     );
   }
 
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
     return new Response(
-      JSON.stringify({ status: 'error', message: 'Invalid URL', developed_by: DEVELOPER }),
+      JSON.stringify({ status: 'error', message: 'Invalid YouTube URL provided.', developed_by: DEVELOPER }),
       { status: 400, headers }
     );
   }
 
   try {
-    const result = await extractYouTubeStreamingData(videoId) || await tryInvidious(videoId);
-    if (result) {
-      result.developed_by = DEVELOPER;
-      return new Response(JSON.stringify(result, null, 2), { headers });
+    const data = await getFullYoutubeData(videoId);
+    if (data) {
+      data.developed_by = DEVELOPER;
+      return new Response(JSON.stringify(data, null, 2), { headers });
     }
   } catch (err) {
-    console.error(err);
+    console.error("Extraction error:", err);
   }
 
+  // Final fallback with direct download tool suggestions
   return new Response(
     JSON.stringify({
       status: 'error',
-      message: 'Could not extract data directly.',
-      links: [`https://ssyoutube.com/watch?v=${videoId}`],
+      message: 'Direct extraction failed. Use these tools:',
+      videoId: videoId,
+      direct_tools: [
+        `https://ssyoutube.com/watch?v=${videoId}`,
+        `https://y2mate.com/youtube/${videoId}`
+      ],
       developed_by: DEVELOPER
-    }),
+    }, null, 2),
     { headers }
   );
 });
 
 function extractVideoId(url) {
-  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?#]+)/);
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([^&?#]+)/);
   return match ? match[1] : null;
 }
 
-async function extractYouTubeStreamingData(videoId) {
+async function getFullYoutubeData(videoId) {
   try {
     const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
     });
+
     const html = await res.text();
     const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
     if (!match) return null;
-    
+
     const data = JSON.parse(match[1]);
+    const streamingData = data.streamingData || {};
+    const formats = [];
+
+    // Combine both fixed and adaptive formats for 1080p, 720p, etc.
+    const allStreams = [...(streamingData.formats || []), ...(streamingData.adaptiveFormats || [])];
+
+    allStreams.forEach(stream => {
+      let url = stream.url;
+      if (!url && stream.signatureCipher) {
+        const params = new URLSearchParams(stream.signatureCipher);
+        url = params.get('url');
+      }
+
+      if (url) {
+        formats.push({
+          quality: stream.qualityLabel || (stream.audioQuality ? 'AUDIO' : '360p'),
+          type: stream.mimeType.split(';')[0],
+          download_url: url,
+          size: formatBytes(stream.contentLength),
+          fps: stream.fps || null
+        });
+      }
+    });
+
     return {
-      title: data.videoDetails?.title,
+      status: 'success',
+      videoId: videoId,
+      title: data.videoDetails?.title || "Unknown Title",
+      author: data.videoDetails?.author || "Unknown Channel",
+      duration: formatTime(data.videoDetails?.lengthSeconds),
       thumbnail: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
-      videoId
+      downloads: formats
     };
   } catch { return null; }
 }
 
-async function tryInvidious(videoId) {
-  try {
-    const res = await fetch(`https://yewtu.be/api/v1/videos/${videoId}`);
-    if (res.ok) return await res.json();
-  } catch { return null; }
+function formatBytes(bytes) {
+  if (!bytes) return "Unknown Size";
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][i];
+}
+
+function formatTime(seconds) {
+  if (!seconds) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
