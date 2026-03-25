@@ -1,5 +1,5 @@
 /**
- * Ultimate YouTube Downloader API
+ * Pro YouTube Multi-Engine API
  * Developed by Ramzan Ahsan
  */
 
@@ -21,52 +21,60 @@ Deno.serve(async (request) => {
   if (!youtubeUrl) {
     return new Response(JSON.stringify({
       status: "online",
-      message: "YouTube API Active. Usage: ?url=LINK",
+      message: "API Ready. Usage: ?url=LINK",
       developed_by: DEVELOPER
     }), { headers });
   }
 
+  const vId = extractVideoId(youtubeUrl);
+
+  // --- ENGINE 1: COBALT (Try first for direct MP4) ---
   try {
-    // We use a high-reliability extraction service to bypass YouTube IP blocks
-    const cobaltResponse = await fetch("https://api.cobalt.tools/api/json", {
+    const cobalt = await fetch("https://api.cobalt.tools/api/json", {
       method: "POST",
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        url: youtubeUrl,
-        vQuality: "720", // Downloads 720p by default
-        filenameStyle: "pretty"
-      })
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ url: youtubeUrl, vQuality: "720" })
     });
-
-    const data = await cobaltResponse.json();
-
-    if (data.status === "stream" || data.status === "picker" || data.status === "redirect") {
+    const cData = await cobalt.json();
+    if (cData.url) {
       return new Response(JSON.stringify({
         status: "success",
-        videoId: extractVideoId(youtubeUrl),
-        download_url: data.url || data.picker?.[0]?.url,
-        message: "Link generated successfully",
+        engine: "Cobalt-Premium",
+        title: "Video Found",
+        download: cData.url,
         developed_by: DEVELOPER
       }, null, 2), { headers });
     }
+  } catch (e) { console.log("Engine 1 busy"); }
 
-    throw new Error("Service busy");
+  // --- ENGINE 2: INVIDIOUS (Fallback for metadata + links) ---
+  try {
+    const invidious = await fetch(`https://yewtu.be/api/v1/videos/${vId}`);
+    if (invidious.ok) {
+      const iData = await invidious.json();
+      return new Response(JSON.stringify({
+        status: "success",
+        engine: "Invidious-Core",
+        title: iData.title,
+        thumbnail: iData.videoThumbnails?.[0]?.url,
+        formats: iData.formatStreams?.map(f => ({ quality: f.qualityLabel, link: f.url })),
+        developed_by: DEVELOPER
+      }, null, 2), { headers });
+    }
+  } catch (e) { console.log("Engine 2 busy"); }
 
-  } catch (err) {
-    // Fallback if even the high-reliability service fails
-    return new Response(JSON.stringify({
-      status: "error",
-      message: "YouTube security is high. Use these direct tools:",
-      direct_tools: [
-        `https://ssyoutube.com/watch?v=${extractVideoId(youtubeUrl)}`,
-        `https://y2mate.com/youtube/${extractVideoId(youtubeUrl)}`
-      ],
-      developed_by: DEVELOPER
-    }, null, 2), { headers });
-  }
+  // --- ENGINE 3: THE "NEVER FAIL" REDIRECT ---
+  return new Response(JSON.stringify({
+    status: "redirect",
+    message: "Direct API servers are busy. Click the link below to download instantly.",
+    video_info: {
+      id: vId,
+      thumbnail: `https://i.ytimg.com/vi/${vId}/maxresdefault.jpg`
+    },
+    instant_download: `https://ssyoutube.com/watch?v=${vId}`,
+    alternative: `https://y2mate.com/youtube/${vId}`,
+    developed_by: DEVELOPER
+  }, null, 2), { headers });
 });
 
 function extractVideoId(url) {
